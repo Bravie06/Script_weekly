@@ -496,7 +496,12 @@ def build_ocm_reference_table(ws) -> dict[str, dict]:
     """
     Build reference table from OCM worksheet rows (starting at row 3).
     Cols: Col A (index 0) = Site Name, Col B (index 1) = Site Code, Col C (index 2) = Vendor.
-    Returns dictionary mapping calculated site_code -> {'row': row_number, 'site_name': name, 'raw_code': raw_code, 'vendor': vendor}.
+    Returns dictionary mapping calculated site_code ->
+        {'rows': [row_number, ...], 'site_name': name, 'raw_code': raw_code, 'vendor': vendor}.
+
+    The OCM file may list the same site code on several rows (duplicates):
+    ALL those rows are kept in 'rows' so that every one of them gets filled
+    with the site's values, not just a single row.
     """
     ref_table = {}
     for row in ws.iter_rows(min_row=3, max_col=3, values_only=False):
@@ -517,12 +522,18 @@ def build_ocm_reference_table(ws) -> dict[str, dict]:
 
         if site_code:
             row_num = row[0].row if row else None
-            ref_table[site_code] = {
-                'row': row_num,
-                'site_name': raw_name,
-                'raw_code': raw_code,
-                'vendor': vendor,
-            }
+            if site_code in ref_table:
+                # Duplicate row for an already-seen site code: keep it too,
+                # so the writer fills this row as well.
+                if row_num is not None and row_num not in ref_table[site_code]['rows']:
+                    ref_table[site_code]['rows'].append(row_num)
+            else:
+                ref_table[site_code] = {
+                    'rows': [row_num],
+                    'site_name': raw_name,
+                    'raw_code': raw_code,
+                    'vendor': vendor,
+                }
             if raw_code and raw_code not in ref_table:
                 ref_table[raw_code] = ref_table[site_code]
     return ref_table
@@ -612,18 +623,19 @@ def update_ocm_file(
             _log(f'  {sheet_name}: created {len(missing_keys)} missing '
                  f'period column(s): {missing_keys[0]} … {missing_keys[-1]}')
 
-        # ── Build site_code → row-number reference map using vendor column ─────
+        # ── Build site_code → row-numbers reference map using vendor column ────
+        # A site code may appear on several OCM rows (duplicates): the values
+        # are written to EVERY row carrying the code, so no row stays empty.
         ref_table = build_ocm_reference_table(ws)
-        site_row = {code: info['row'] for code, info in ref_table.items()}
+        site_rows = {code: info['rows'] for code, info in ref_table.items()}
 
         # ── Write values ───────────────────────────────────────────────────────
         written = 0
         matched_sites = 0
         for site_code, period_map in data.items():
-            if site_code not in site_row:
+            if site_code not in site_rows:
                 continue
             matched_sites += 1
-            rn = site_row[site_code]
             for pk, sheet_map in period_map.items():
                 if sheet_name not in sheet_map:
                     continue
@@ -631,8 +643,10 @@ def update_ocm_file(
                     continue
                 cn = period_col[pk]
                 decimals = 2 if sheet_name in TRAFFIC_SHEETS else 4
-                ws.cell(row=rn, column=cn, value=round(sheet_map[sheet_name], decimals))
-                written += 1
+                value = round(sheet_map[sheet_name], decimals)
+                for rn in site_rows[site_code]:
+                    ws.cell(row=rn, column=cn, value=value)
+                    written += 1
 
         _log(f'  {sheet_name}: {written} cells written '
              f'({matched_sites} sites matched)')
