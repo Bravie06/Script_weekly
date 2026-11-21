@@ -585,15 +585,44 @@ def update_ocm_file(
                 elif period == 'monthly' and re.match(r'^\d{4}M\d{2}$', hv):
                     period_col[hv] = cell.column
 
+        # ── Create columns for periods present in the data but missing ───────
+        # in the OCM file (e.g. the raw files cover weeks 2026W27–2026W47
+        # while the OCM file only has columns up to 2026W20). Without this,
+        # those periods are silently skipped and nothing is written.
+        needed_keys = {
+            pk
+            for period_map in data.values()
+            for pk, sheet_map in period_map.items()
+            if sheet_name in sheet_map
+        }
+        missing_keys = sorted(needed_keys - set(period_col))
+        if missing_keys:
+            last_header_col = max(
+                (cell.column for cell in header_row if cell.value is not None),
+                default=3,
+            )
+            next_col = last_header_col + 1
+            for pk in missing_keys:
+                header_val = (
+                    datetime(pk.year, pk.month, pk.day) if period == 'daily' else pk
+                )
+                ws.cell(row=2, column=next_col, value=header_val)
+                period_col[pk] = next_col
+                next_col += 1
+            _log(f'  {sheet_name}: created {len(missing_keys)} missing '
+                 f'period column(s): {missing_keys[0]} … {missing_keys[-1]}')
+
         # ── Build site_code → row-number reference map using vendor column ─────
         ref_table = build_ocm_reference_table(ws)
         site_row = {code: info['row'] for code, info in ref_table.items()}
 
         # ── Write values ───────────────────────────────────────────────────────
         written = 0
+        matched_sites = 0
         for site_code, period_map in data.items():
             if site_code not in site_row:
                 continue
+            matched_sites += 1
             rn = site_row[site_code]
             for pk, sheet_map in period_map.items():
                 if sheet_name not in sheet_map:
@@ -605,7 +634,8 @@ def update_ocm_file(
                 ws.cell(row=rn, column=cn, value=round(sheet_map[sheet_name], decimals))
                 written += 1
 
-        _log(f'  {sheet_name}: {written} cells written')
+        _log(f'  {sheet_name}: {written} cells written '
+             f'({matched_sites} sites matched)')
 
     wb.save(filepath)
     _log(f'Saved: {os.path.basename(filepath)}')
