@@ -3,15 +3,21 @@ generate_ocm_net_report.py
 Updates OCM Network KPI files (Daily, Weekly, Monthly) from vendor raw files.
 
 Supported vendors/generations:
-  Huawei  2G, 3G, 4G  + dedicated packet-loss files (H_3G_PL, H_4G_PL)
-  Nokia   2G, 3G, 4G  + dedicated packet-loss files (N_3G_PL, N_4G_PL)
-  ZTE     2G, 3G, 4G  + dedicated packet-loss files (Z_3G_PL, Z_4G_PL)
+  Huawei  2G, 3G, 4G
+  Nokia   2G, 3G, 4G
+  ZTE     2G, 3G, 4G
 
 Sheets updated in each OCM file:
   Avail2G, Avail3G, Avail4G,
-  DailyCombinedCSTrafic (Kerl), DailyCombinedPSTrafic (TB),
-  CSSR2G, CSSR3G, DCR2G, DCR3G,
-  3G PacketLoss, 4G PacketLoss, Throughput 4G Mbps
+  CSSR2G, CSSR3G, CSSR4G,
+  DCR2G, DCR3G, DCR4G,
+  TRAFFIC2G, TRAFFIC3G, TRAFFIC4G
+
+Note: the former sheets 'DailyCombinedCSTrafic (Kerl)',
+'DailyCombinedPSTrafic (TB)', '3G PacketLoss', '4G PacketLoss' and
+'Throughput 4G Mbps' no longer exist in the OCM files and are no longer
+updated (all related code, including the dedicated packet-loss mode,
+has been removed).
 """
 
 from __future__ import annotations
@@ -23,8 +29,6 @@ from datetime import datetime, date
 from collections import defaultdict
 
 import openpyxl
-from openpyxl.styles import PatternFill
-from openpyxl.formatting.rule import FormulaRule
 
 logger = logging.getLogger(__name__)
 
@@ -34,31 +38,31 @@ SHEETS = [
     'Avail2G',
     'Avail3G',
     'Avail4G',
-    'DailyCombinedCSTrafic (Kerl)',
-    'DailyCombinedPSTrafic (TB)',
     'CSSR2G',
     'CSSR3G',
+    'CSSR4G',
     'DCR2G',
     'DCR3G',
-    '3G PacketLoss',
-    '4G PacketLoss',
-    'Throughput 4G Mbps',
+    'DCR4G',
+    'TRAFFIC2G',
+    'TRAFFIC3G',
+    'TRAFFIC4G',
 ]
 
-# Sheets for dedicated packet-loss-only update mode
-PL_SHEETS = {'3G PacketLoss', '4G PacketLoss'}
-PL_VENDOR_KEYS = {'H_3G_PL', 'H_4G_PL', 'N_3G_PL', 'N_4G_PL', 'Z_3G_PL', 'Z_4G_PL'}
-
-# Sheets where values from multiple vendor files are SUMMED (not averaged)
+# Sheets where values are SUMMED (not averaged) when aggregating daily
+# values to weekly / monthly, and when merging several vendor files:
+# traffic volumes add up, unlike rates (availability / CSSR / DCR).
 ADDITIVE_SHEETS = {
-    'DailyCombinedCSTrafic (Kerl)',
-    'DailyCombinedPSTrafic (TB)',
+    'TRAFFIC2G',
+    'TRAFFIC3G',
+    'TRAFFIC4G',
 }
 
 # Sheets where values are rounded to 2 decimal places on output
 TRAFFIC_SHEETS = {
-    'DailyCombinedCSTrafic (Kerl)',
-    'DailyCombinedPSTrafic (TB)',
+    'TRAFFIC2G',
+    'TRAFFIC3G',
+    'TRAFFIC4G',
 }
 
 # ─── KPI MAPPINGS ─────────────────────────────────────────────────────────────
@@ -67,9 +71,8 @@ TRAFFIC_SHEETS = {
 # multiplier converts the raw value to the target unit:
 #   availability  → % (0-100)
 #   CSSR / DCR    → % (0-100)
-#   CS Traffic    → Kilo-Erlang  (raw Erl × 0.001)
-#   PS Traffic    → Tera-Bytes   (raw MB × 1e-6, raw GB × 0.001)
-#   Throughput    → Mbps         (raw kbps × 0.001)
+#   TRAFFIC2G/3G  → Erlang, kept in the raw unit (multiplier 1.0)
+#   TRAFFIC4G     → GB, kept in the raw unit (multiplier 1.0)
 
 #
 # UNIT NOTES per vendor:
@@ -99,30 +102,6 @@ KPI_MAP: dict[str, dict[str, tuple[str, float]]] = {
         'Z_4G': ('ORA_4G_Cell Availability, excluding BLU_ZTE(%)', 1.0),
     },
 
-    'DailyCombinedCSTrafic (Kerl)': {
-        # Raw values in Erlang; output in Kilo-Erlang
-        'H_2G': ('K3014:Traffic Volume on TCH(Erl)',     0.001),
-        'H_3G': ('Grp_ 3G TRAFFIC – SPEECH(Erl)',         0.001),  # Erl → Kerl
-        'N_2G': ('Erlang_Traffic_Carried_2G',            0.001),
-        'N_3G': ('grp_traffic_speech_erlangs',           0.001),
-        'Z_2G': ('ORA_2G_CS_TRAFFIC',                   0.001),
-        'Z_3G': ('ORA_3G_CS Voice Traffic (Erl)',        0.001),
-    },
-
-    'DailyCombinedPSTrafic (TB)': {
-        # Formula: (2GPS_GB + 3GPS_GB + 4GPS_GB) / 1000 → TB
-        # MB sources are converted MB→GB (×0.001) then GB→TB (×0.001) = ×1e-6
-        'H_2G': ('2G PS Traffic(MB)',                                  1e-6),  # MB → TB
-        'H_3G': ('Grp_3G&3G+ TOTAL DATA TRAFFIC VOLUME DL&UL(GB)',    0.001), # GB → TB
-        'H_4G': ('4G_Grp_4G/LTE TRAFFIC VOLUME(GB)',                  0.001), # GB → TB
-        'N_2G': ('Grp_2G_Traffic_Data_Mbytes',                        1e-6),  # MB → TB
-        # N_3G: confirm units for Grp_Total_Data_Traffic_Vol_DlUL
-        'N_4G': ('Grp_4G_Traffic_New_Gbytes',                         0.001), # GB → TB
-        'Z_2G': ('ORA_2G_Traffic_Data_GB',                            0.001), # GB → TB
-        'Z_3G': ('ORA_3G_Traffic Total Data_MAC (GB)',                 0.001), # GB → TB
-        'Z_4G': ('ORA_4G_Total TRAFFIC(DL+UL)(GB)',                   0.001), # GB → TB
-    },
-
     'CSSR2G': {
         'H_2G': ('FT_Call Setup Success Rate-Speech',   1.0),
         'N_2G': ('ORA_2G_CSSR_CS_new',                  1.0),
@@ -147,58 +126,39 @@ KPI_MAP: dict[str, dict[str, tuple[str, float]]] = {
         'Z_3G': ('ORA_3G_Drop Call Rate CS(%)',           100.0),  # ratio → %
     },
 
-    'PacketLoss_REMOVED': {},  # replaced by 3G PacketLoss and 4G PacketLoss below
-
-    '3G PacketLoss': {
-        # Huawei 3G: IP-path forward packet drop mean (%)
-        'H_3G_PL': ('VS.IPPM.Forword.DropMeans(%)',    1.0),
-        # Nokia 3G: HS-DSCH frame-loss credit reductions (count, not %) – included as-is
-        'N_3G_PL': ('HS-DSCH CREDIT REDUCTIONS DUE TO FRAME LOSS', 1.0),
-        # ZTE 3G: Packet loss enhance (%)
-        'Z_3G_PL': ('Packet loss Enhance(%)',           1.0),
+    'CSSR4G': {
+        'H_4G': ('4G_Grp_4G/LTE CALL SETUP SUCCESS RATE (WITHOUT VOLTE)(%)', 1.0),
+        'N_4G': ('LTE_CALL_SETUP_SUCCESS_RATE_NEW_PERC',                     1.0),
+        'Z_4G': ('ORA_4G_CALL_SETUP_SUCCESS_RATE_New(%)',                    1.0),
     },
 
-    '4G PacketLoss': {
-        # Huawei 4G: DL packet loss rate of data service (%)
-        'H_4G_PL': ('DL Packet Loss Rate of Data Service(%)', 1.0),
-        # Nokia 4G: computed via formula 100-(100*SCTP_S1CHSNT(M8035C0))/(SCTP_S1CHRSNT(M8035C2)+SCTP_S1CHSNT(M8035C0))
-        # handled in COMPUTED_KPIS below – no direct column entry here
-        # ZTE 4G: IP-path packet loss rate (%)
-        'Z_4G_PL': ('Packet Loss Rate(%)',              1.0),
+    'DCR4G': {
+        'H_4G': ('4G_Grp_4G/LTE DROP CALL RATE (WITHOUT VOLTE)(%)', 1.0),
+        # N_4G: Nokia column name not provided yet – to be added when known.
+        'Z_4G': ('ORA_4G_LTE_Drop_Call_Rate_WO_VoLTE_New(%)',       1.0),
     },
 
-    'Throughput 4G Mbps': {
-        # Both Huawei and Nokia report in kbps despite label differences
-        'H_4G': ('4G_Grp_AVG 4G/LTE DL USER THRPUT (ALL) (KBPS)(kB/s)', 0.001),  # kbps → Mbps
-        'N_4G': ('LTE_DL_USER_THRPUT_ALL_MBPS_NEW',                       0.001),  # ÷1000 → Mbps
-        'Z_4G': ('ORA_4G_DL_User_Throughput_New(kbps)',                   0.001),  # kbps → Mbps
+    'TRAFFIC2G': {
+        # CS traffic volume, in Erlang (raw unit kept as-is)
+        'H_2G': ('K3014:Traffic Volume on TCH(Erl)',   1.0),
+        'N_2G': ('Erlang_Traffic_Carried_2G',          1.0),
+        'Z_2G': ('ORA_2G_CS_TRAFFIC',                  1.0),
     },
-}
 
-# ─── COMPUTED KPIs ────────────────────────────────────────────────────────────
-# For KPIs that cannot be read directly from a single column but need a formula.
-# {vendor_gen: [(sheet_name, col_a_name, col_b_name, compute_fn)]}
-# compute_fn(a, b) → float | None
+    'TRAFFIC3G': {
+        # CS speech traffic volume, in Erlang (raw unit kept as-is)
+        'H_3G': ('Grp_ 3G TRAFFIC – SPEECH(Erl)',       1.0),
+        'N_3G': ('grp_traffic_speech_erlangs',         1.0),
+        'Z_3G': ('ORA_3G_CS Voice Traffic (Erl)',       1.0),
+    },
 
-def _n4g_pl_formula(snt, rsnt):
-    """Nokia 4G packet loss: 100 - (100 * SCTP_S1CHSNT(M8035C0)) / (SCTP_S1CHRSNT(M8035C2) + SCTP_S1CHSNT(M8035C0))"""
-    a = _to_float(snt)    # SCTP_S1CHSNT  (M8035C0) — sent chunks
-    b = _to_float(rsnt)   # SCTP_S1CHRSNT (M8035C2) — retransmitted chunks
-    if a is None or b is None:
-        return None
-    denom = b + a
-    if denom == 0:
-        return None
-    return round(100.0 - (100.0 * a) / denom, 6)
-
-COMPUTED_KPIS: dict[str, list[tuple]] = {
-    # (sheet_name, col_a_header, col_b_header, fn(a_val, b_val) → float|None)
-    'N_4G_PL': [
-        ('4G PacketLoss',
-         'SCTP_S1CHSNT (M8035C0)',
-         'SCTP_S1CHRSNT (M8035C2)',
-         _n4g_pl_formula),
-    ],
+    'TRAFFIC4G': {
+        # Data traffic volume, in GB (raw unit kept as-is)
+        # Huawei: DL volume only, per the specified source column
+        'H_4G': ('4G_Grp_4G/LTE DL TRAFFIC VOLUME(GB)', 1.0),
+        'N_4G': ('Grp_4G_Traffic_New_Gbytes',           1.0),
+        'Z_4G': ('ORA_4G_Total TRAFFIC(DL+UL)(GB)',     1.0),
+    },
 }
 
 # ─── VENDOR FILE READ CONFIGS ─────────────────────────────────────────────────
@@ -259,49 +219,6 @@ FILE_CONFIGS: dict[str, dict] = {
     'Z_4G': {
         # ZTE 4G uses a non-breaking space (\xa0) in the column name;
         # headers are normalised before comparison so use a regular space here.
-        'date_col': 'Begin Time',
-        'site_col': 'Managed Element',
-        'skip_extra_hdr': False,
-        'skip_site_re': None,
-    },
-    # ── Dedicated packet-loss files ───────────────────────────────────────────
-    'H_3G_PL': {
-        # Huawei 3G IP-path monitoring file
-        'date_col': 'Date',
-        'site_col': 'NODEBNAME',
-        'skip_extra_hdr': False,
-        'skip_site_re': None,
-    },
-    'H_4G_PL': {
-        # Huawei 4G main KPIs file (contains DL Packet Loss Rate of Data Service)
-        'date_col': 'Date',
-        'site_col': 'eNodeB Name',
-        'skip_extra_hdr': False,
-        'skip_site_re': None,
-    },
-    'N_3G_PL': {
-        # Nokia 3G packet-loss KPI file – same Nokia two-row header pattern
-        'date_col': 'Period start time',
-        'site_col': 'WBTS name',
-        'skip_extra_hdr': True,
-        'skip_site_re': r'^\d+$',
-    },
-    'N_4G_PL': {
-        # Nokia 4G SCTP S1 counters – PL computed via COMPUTED_KPIS formula
-        'date_col': 'Period start time',
-        'site_col': 'LNBTS name',
-        'skip_extra_hdr': True,
-        'skip_site_re': None,
-    },
-    'Z_3G_PL': {
-        # ZTE 3G IP-path monitoring file – multiple rows per site/day → averaged
-        'date_col': 'Begin Time',
-        'site_col': 'Office Name',
-        'skip_extra_hdr': False,
-        'skip_site_re': None,
-    },
-    'Z_4G_PL': {
-        # ZTE 4G IP-path monitoring file – multiple rows per site/day → averaged
         'date_col': 'Begin Time',
         'site_col': 'Managed Element',
         'skip_extra_hdr': False,
@@ -480,21 +397,9 @@ def read_vendor_file(
                 logger.warning(f'  {vendor_gen}: KPI column "{col_name}" '
                                f'not found for sheet "{sheet_name}"')
 
-    # Build computed KPI specs (e.g. Nokia 4G PL formula)
-    computed_specs = []
-    for sheet_name, col_a, col_b, fn in COMPUTED_KPIS.get(vendor_gen, []):
-        na, nb = _normalise(col_a), _normalise(col_b)
-        if na in headers and nb in headers:
-            computed_specs.append((sheet_name, headers.index(na), headers.index(nb), fn))
-        else:
-            missing = col_a if na not in headers else col_b
-            logger.warning(f'  {vendor_gen}: computed KPI column "{missing}" '
-                           f'not found for sheet "{sheet_name}"')
-
     skip_re = re.compile(cfg['skip_site_re']) if cfg.get('skip_site_re') else None
 
-    # Use accumulator to handle files with multiple rows per site/day
-    # (e.g. ZTE packet-loss file with one row per IP path).
+    # Use accumulator to handle files with multiple rows per site/day.
     # Structure: {site_code: {date: {sheet_name: [values]}}}
     accum: dict[str, dict[date, dict[str, list[float]]]] = defaultdict(
         lambda: defaultdict(lambda: defaultdict(list))
@@ -528,13 +433,6 @@ def read_vendor_file(
             val = _to_float(raw)
             if val is not None:
                 accum[site_code][d][sheet_name].append(round(val * mult, 6))
-
-        for sheet_name, idx_a, idx_b, fn in computed_specs:
-            val_a = row[idx_a] if idx_a < len(row) else None
-            val_b = row[idx_b] if idx_b < len(row) else None
-            val = fn(val_a, val_b)
-            if val is not None:
-                accum[site_code][d][sheet_name].append(val)
 
     wb.close()
 
@@ -590,65 +488,6 @@ def aggregate_weekly(daily):
 
 def aggregate_monthly(daily):
     return _aggregate(daily, _date_to_month_key)
-
-
-# ─── CONDITIONAL FORMATTING ───────────────────────────────────────────────────
-
-_RED_FILL   = PatternFill(start_color='FF0000', end_color='FF0000', fill_type='solid')
-_GREEN_FILL = PatternFill(start_color='00B050', end_color='00B050', fill_type='solid')
-
-# CF rules per sheet:
-#   3G PacketLoss : HW >=1 → Red else Green; ZTE >=0.01 → Red else Green; Nokia → no color
-#   4G PacketLoss : HW/Nokia >=1 → Red else Green; ZTE >=0.01 → Red else Green
-_PL_CF_RULES = {
-    '3G PacketLoss': [
-        # (vendor_in_col_C, threshold, operator)  — Nokia intentionally absent
-        ('HUAWEI', 1,    '>='),
-        ('ZTE',    0.01, '>='),
-    ],
-    '4G PacketLoss': [
-        ('HUAWEI', 1,    '>='),
-        ('NOKIA',  1,    '>='),
-        ('ZTE',    0.01, '>='),
-    ],
-}
-
-
-def _apply_pl_cf(ws, sheet_name: str, last_data_col: int) -> None:
-    """Apply conditional formatting to a PacketLoss sheet."""
-    import openpyxl.utils as xl_utils
-    rules = _PL_CF_RULES.get(sheet_name, [])
-    if not rules:
-        return
-
-    # Range: col I (9) → last date col, rows 3 → last data row
-    last_row = ws.max_row or 3
-    first_col_letter = xl_utils.get_column_letter(9)
-    last_col_letter  = xl_utils.get_column_letter(last_data_col)
-    cf_range = f'{first_col_letter}3:{last_col_letter}{last_row}'
-
-    # Clear any existing CF on this sheet to avoid accumulation on repeated runs
-    ws.conditional_formatting = openpyxl.worksheet.worksheet.ConditionalFormattingList()
-
-    for vendor, threshold, op in rules:
-        # Red: cell meets threshold for this vendor
-        ws.conditional_formatting.add(
-            cf_range,
-            FormulaRule(
-                formula=[f'AND($C3="{vendor}",{first_col_letter}3{op}{threshold})'],
-                fill=_RED_FILL,
-                stopIfTrue=True,
-            ),
-        )
-        # Green: cell does NOT meet threshold for this vendor (and has a value)
-        inv_op = '<' if op == '>=' else '>'
-        ws.conditional_formatting.add(
-            cf_range,
-            FormulaRule(
-                formula=[f'AND($C3="{vendor}",{first_col_letter}3{inv_op}{threshold},{first_col_letter}3<>"")'],
-                fill=_GREEN_FILL,
-            ),
-        )
 
 
 # ─── OCM FILE WRITER ──────────────────────────────────────────────────────────
@@ -768,10 +607,6 @@ def update_ocm_file(
 
         _log(f'  {sheet_name}: {written} cells written')
 
-        # ── Conditional formatting for PacketLoss sheets ───────────────────────
-        if sheet_name in ('3G PacketLoss', '4G PacketLoss') and period_col:
-            _apply_pl_cf(ws, sheet_name, max(period_col.values()))
-
     wb.save(filepath)
     _log(f'Saved: {os.path.basename(filepath)}')
 
@@ -804,7 +639,7 @@ def process_vendor_files(
     granularities : subset of {'daily', 'weekly', 'monthly'}.
                     Defaults to all keys present in ocm_files.
     sheets_filter : if set, only these OCM sheets are written and only vendor keys
-                    that map to these sheets are read. Use PL_SHEETS for PL-only mode.
+                    that map to these sheets are read.
     log_callback  : optional callable(str) for UI progress messages.
     """
     if granularities is None:
@@ -817,10 +652,6 @@ def process_vendor_files(
         for sheet, vmap in KPI_MAP.items():
             if sheet in sheets_filter:
                 relevant_vkeys.update(vmap.keys())
-        for vg, specs in COMPUTED_KPIS.items():
-            for sheet_name, *_ in specs:
-                if sheet_name in sheets_filter:
-                    relevant_vkeys.add(vg)
         vendor_files = {vg: fp for vg, fp in vendor_files.items()
                         if vg in relevant_vkeys}
 
@@ -911,21 +742,13 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     # Auto-detect files by filename prefix
-    # IMPORTANT: more-specific prefixes must come before overlapping ones
-    # (e.g. 'H PACKET' before 'H P', 'Z PACKET' before 'Z P')
     prefixes = {
         'H_2G':    ('H 2G', 'H2G'),
         'H_3G':    ('H 3G', 'H3G'),
         'H_4G':    ('H 4G', 'H4G'),
-        'H_3G_PL': ('HUAWEI 3G PACKET',),
-        'H_4G_PL': ('HUAWEI 4G PACKET',),
         'N_2G':    ('N 2G', 'N2G'),
         'N_3G':    ('N 3G', 'N3G'),
         'N_4G':    ('N 4G', 'N4G'),
-        'N_3G_PL': ('NOKIA 3G PACKET',),
-        'N_4G_PL': ('NOKIA 4G PACKET',),
-        'Z_3G_PL': ('ZTE 3G PACKET',),
-        'Z_4G_PL': ('ZTE 4G PACKET',),
         'Z_2G':    ('Z P',),           # 'Z Performance Management...2G'
         'Z_3G':    ('Z 3G', 'Z3G'),
         'Z_4G':    ('Z-4G', 'Z 4G', 'Z4G'),

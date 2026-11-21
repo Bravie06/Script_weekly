@@ -18,8 +18,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from generate_ocm_net_report import (
     process_vendor_files,
     OCM_DEFAULT_FILENAMES,
-    PL_SHEETS,
-    PL_VENDOR_KEYS,
 )
 
 class OCMNetGUI:
@@ -36,17 +34,7 @@ class OCMNetGUI:
         ('Z_4G', 'ZTE 4G'),
     ]
 
-    # Packet-loss dedicated files
-    PL_VENDOR_LABELS = [
-        ('H_3G_PL', 'Huawei 3G Packet Loss'),
-        ('H_4G_PL', 'Huawei 4G Packet Loss'),
-        ('N_3G_PL', 'Nokia 3G Packet Loss'),
-        ('N_4G_PL', 'Nokia 4G Packet Loss'),
-        ('Z_3G_PL', 'ZTE 3G Packet Loss'),
-        ('Z_4G_PL', 'ZTE 4G Packet Loss'),
-    ]
-
-    VENDOR_LABELS = MAIN_VENDOR_LABELS + PL_VENDOR_LABELS
+    VENDOR_LABELS = MAIN_VENDOR_LABELS
 
     GRAN_LABELS = [
         ('daily',   'Daily'),
@@ -79,9 +67,6 @@ class OCMNetGUI:
         self.file_vars: dict[str, tk.StringVar] = {
             key: tk.StringVar() for key, _ in self.VENDOR_LABELS
         }
-
-        # Packet-loss only mode
-        self.pkt_only_var = tk.BooleanVar(value=False)
 
         # Default RAW FILES folder (for auto-detect / browse initial dir)
         self.raw_dir_var = tk.StringVar(
@@ -160,17 +145,11 @@ class OCMNetGUI:
                    command=self._browse_raw_dir).grid(row=0, column=3)
         row += 1
 
-        # Packet-loss only checkbox + auto-detect button on same row
-        pkt_row_frame = ttk.Frame(outer)
-        pkt_row_frame.grid(row=row, column=0, columnspan=3, sticky='ew')
-        ttk.Checkbutton(
-            pkt_row_frame,
-            text='Packet Loss sheets only  (skip main KPI files)',
-            variable=self.pkt_only_var,
-            command=self._toggle_pkt_only,
-        ).pack(side='left')
+        # Auto-detect button row
+        detect_row_frame = ttk.Frame(outer)
+        detect_row_frame.grid(row=row, column=0, columnspan=3, sticky='ew')
         ttk.Button(
-            pkt_row_frame,
+            detect_row_frame,
             text='Auto-detect from RAW FILES folder',
             command=self._auto_detect,
         ).pack(side='right')
@@ -182,27 +161,7 @@ class OCMNetGUI:
         ).grid(row=row, column=0, columnspan=3, sticky='w', pady=(4, 0))
         row += 1
 
-        self._main_vendor_rows: list[tuple] = []
         for key, label in self.MAIN_VENDOR_LABELS:
-            lbl = ttk.Label(outer, text=f'{label}:')
-            lbl.grid(row=row, column=0, sticky='w', pady=2)
-            ent = ttk.Entry(outer, textvariable=self.file_vars[key])
-            ent.grid(row=row, column=1, sticky='ew', padx=6)
-            btn = ttk.Button(
-                outer, text='Browse…',
-                command=lambda k=key: self._browse_vendor_file(k),
-            )
-            btn.grid(row=row, column=2)
-            self._main_vendor_rows.append((lbl, ent, btn))
-            row += 1
-
-        # ── Packet-Loss vendor rows ───────────────────────────────────────────
-        ttk.Label(
-            outer, text='Packet Loss Files', font=('Segoe UI', 9, 'italic')
-        ).grid(row=row, column=0, columnspan=3, sticky='w', pady=(6, 0))
-        row += 1
-
-        for key, label in self.PL_VENDOR_LABELS:
             ttk.Label(outer, text=f'{label}:').grid(
                 row=row, column=0, sticky='w', pady=2
             )
@@ -300,16 +259,6 @@ class OCMNetGUI:
         if fp:
             self.file_vars[key].set(fp)
 
-    # ─── TOGGLE PL-ONLY ───────────────────────────────────────────────────────
-
-    def _toggle_pkt_only(self) -> None:
-        """Enable/disable main KPI vendor rows based on PL-only checkbox."""
-        state = 'disabled' if self.pkt_only_var.get() else 'normal'
-        for lbl, ent, btn in self._main_vendor_rows:
-            lbl.configure(foreground='grey' if self.pkt_only_var.get() else '')
-            ent.configure(state=state)
-            btn.configure(state=state)
-
     # ─── AUTO-DETECT ──────────────────────────────────────────────────────────
 
     def _auto_detect(self) -> None:
@@ -323,20 +272,13 @@ class OCMNetGUI:
             )
             return
 
-        # More-specific prefixes must come before overlapping ones
         patterns: dict[str, tuple] = {
-            'H_3G_PL': ('HUAWEI 3G PACKET',),
-            'H_4G_PL': ('HUAWEI 4G PACKET',),
             'H_2G':    ('H 2G', 'H2G'),
             'H_3G':    ('H 3G', 'H3G'),
             'H_4G':    ('H 4G', 'H4G'),
-            'N_3G_PL': ('NOKIA 3G PACKET',),
-            'N_4G_PL': ('NOKIA 4G PACKET',),
             'N_2G':    ('N 2G', 'N2G'),
             'N_3G':    ('N 3G', 'N3G'),
             'N_4G':    ('N 4G', 'N4G'),
-            'Z_3G_PL': ('ZTE 3G PACKET',),
-            'Z_4G_PL': ('ZTE 4G PACKET',),
             'Z_2G':    ('Z P',),
             'Z_3G':    ('Z 3G', 'Z3G'),
             'Z_4G':    ('Z-4G', 'Z 4G', 'Z4G'),
@@ -360,8 +302,7 @@ class OCMNetGUI:
     # ─── RUN ──────────────────────────────────────────────────────────────────
 
     def _run(self) -> None:
-        pkt_only = self.pkt_only_var.get()
-        sheets_filter = PL_SHEETS if pkt_only else None
+        sheets_filter = None
 
         # Collect selected granularities
         granularities = {
