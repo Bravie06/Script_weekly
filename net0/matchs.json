@@ -1,9 +1,1 @@
-{
-  "version": 1,
-  "une": {
-    "titre": "Le cinéma et le foot, sans limites",
-    "texte": "Films, séries, animés et les chaînes TV en direct : tout est dans Cinéma.",
-    "section": "tv"
-  },
-  "matchs": []
-}
+{"matchs":[{"competition":"Serie A","date":"2026-11-22T12:30:00+01:00","equipes":"Juventus vs Venezia","id":"2026-11-22-juventus-venezia"},{"competition":"La Liga","date":"2026-11-22T14:00:00+01:00","equipes":"FC Barcelone vs Villarreal","id":"2026-11-22-barca-villarreal"},{"competition":"Premier League","date":"2026-11-22T15:00:00+01:00","equipes":"Hull City vs Brighton","id":"2026-11-22-hull-brighton"},{"competition":"Ligue 1","date":"2026-11-22T17:15:00+01:00","equipes":"Lorient vs Rennes","id":"2026-11-22-lorient-rennes"},{"competition":"Premier League","date":"2026-11-22T17:30:00+01:00","equipes":"Liverpool vs Manchester United","id":"2026-11-22-liverpool-manutd"},{"competition":"Serie A","date":"2026-11-22T18:00:00+01:00","equipes":"AC Milan vs Frosinone","id":"2026-11-22-milan-frosinone"},{"competition":"Serie A","date":"2026-11-22T20:45:00+01:00","equipes":"Atalanta vs Inter","id":"2026-11-22-atalanta-inter"},{"competition":"Ligue 1","date":"2026-11-22T20:45:00+01:00","equipes":"Marseille vs Le Mans","id":"2026-11-22-marseille-lemans"},{"competition":"La Liga","date":"2026-11-22T21:00:00+01:00","equipes":"Getafe vs Atlético Madrid","id":"2026-11-22-getafe-atletico"}],"une":{"section":"tv","texte":"Le derby d'Angleterre à 17:30, Barça à 14:00, Marseille à 20:45 : les grands matchs du dimanche sont dans Chaînes TV.","titre":"Liverpool – Manchester United, le choc du jour"},"version":1}
